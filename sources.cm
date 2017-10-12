@@ -1,0 +1,33 @@
+Group is
+    $/basis.cm
+    $/smlnj-lib.cm
+    $/ml-yacc-lib.cm
+
+    PRETTY_PRINT-sig.sml
+    PrettyPrint.sml
+
+    il-var.sml
+    il-syntax.sml
+    il-ops.sml
+    il-typing.sml
+    il-machine.sml
+    il-evaluation.sml
+    il-checked-evaluation.sml
+    il-print.sml
+    (*il-test.sml*)
+
+    el-syntax.sml
+    el-ops.sml
+    el-lexer.lex
+    el-parser.grm
+    el-parser.sml
+    el-aux.sml
+    el-trace.sml
+    el-elaboration.sml
+    el-print.sml
+    el-pretty.sml
+    el-run.sml
+    el-test.sml
+    el-main.sml
+
+

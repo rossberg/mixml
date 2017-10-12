@@ -1,0 +1,32 @@
+(*) Tests for core language
+
+val id0 = fn [a] -> fn x : a -> x
+val id1 : forall [a] -> a -> a
+val id1 = fn [a] -> fn x : a -> x
+val id2 [a] (x : a) = x
+val id3 [a] (x : a) : a= x
+
+val compose' : forall [a, b, c] -> (b -> c) -> (a -> b) -> a -> c
+val compose' = fn [a, b, c] -> fn f : (b -> c) -> fn g : (a -> b) -> fn x : a -> f (g x)
+val compose [a, b, c] (f : b -> c) (g : a -> b) (x : a) : c = f (g x)
+val f1 (x : int) = x < x+1
+val f2 (b : bool) = if b then "ye" ++ "s" else "n" ++ "o"
+val f = compose [int, bool, string] f2 f1
+do print "f 5 : "; print (f 5); print "\n"
+
+type t = (int, int)
+type u [a] = (int, a)
+data v = u [int]
+val x = in v [] (3, 4)
+do print "x = "; print x; print "\n"
+val y = out v [] x
+do print "y = "; print y; print "\n"
+
+data v' [a, b] = (a, b)
+val x' = in v' [int, string] (3, "bla")
+do print "x' = "; print x'; print "\n"
+val y' = out v' [int, string] x'
+do print "y' = "; print y'; print "\n"
+
+unit D1 = {data t : int} with {data t = int}
+unit D2 = {data t = int} :> {type t}

@@ -1,0 +1,58 @@
+(*) Example from RMC paper
+
+unit RMC =
+  link X =
+  {
+    module A = {type t}
+    module B = {type u, type t, val g : t -> (u, t)}
+  }
+  with
+  {
+    module A =
+    {
+      type t = int
+      type u = X.B.u
+      val x = 666
+      val f(x : t) = let p = X.B.g(x + 3) in (p#1, p#2 + 5)
+    } :> {type t, type u = X.B.u, val x : t, val f : t -> (u, t)}
+    module B =
+    {
+      type u = int
+      type t = X.A.t
+      val y = A.x     (*)  (A.f A.x)#2 would black-out
+      val g(x : t) = (0, x)
+    } :> {type u, type t = X.A.t, val y : t, val g : t -> (u, t)}
+  }
+
+module RMCmain =
+  link R = !RMC with {do print "RMC = "; print (R.A.f R.B.y); print "\n"}
+
+
+(*) Example from RMC paper, using seals construct
+
+unit RMC' =
+  link X =
+  {
+    module A = {type t}
+    module B = {type u, type t, val g : t -> (u, t)}
+  }
+  with
+  {
+    module A = {type t, type u = X.B.u, val x : t, val f : t -> (u, t)} seals
+    {
+      type t = int
+      type u = X.B.u
+      val x = 666
+      val f(x : t) = let p = X.B.g(x + 3) in (p#1, p#2 + 5)
+    }
+    module B = {type u, type t = X.A.t, val y : t, val g : t -> (u, t)} seals
+    {
+      type u = int
+      type t = X.A.t
+      val y = A.x     (*)  (A.f A.x)#2 would black-out
+      val g(x : t) = (0, x)
+    }
+  }
+
+module RMCmain' =
+  link R = !RMC' with {do print "RMC' = "; print (R.A.f R.B.y); print "\n"}

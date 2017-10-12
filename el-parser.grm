@@ -1,0 +1,444 @@
+(*                                                                              *)
+(* MixML prototype implementation                                               *)
+(*                                                                              *)
+(* Based on: Derek Dreyer, Andreas Rossberg, "Mixin' Up the ML Module System"   *)
+(*                                                                              *)
+(* (c) 2007-2008 Andreas Rossberg                                               *)
+(*                                                                              *)
+
+open EL
+open ELOps
+open VarOps infix ++ |->
+
+fun region(l, r) = {l = l, r = r}
+fun $l r f x = {it = f x, region = region(l, r)}
+fun $$l r x  = {it = x, region = region(l, r)}
+
+fun struc l r decs = struc' l r (map[]) decs
+and struc' l r gam =
+    fn [] => $$l r EmptyM
+     | [dec] => struc'' gam dec
+     | (dec as (x, _))::decs =>
+        let
+            val self = rename "_self"
+            val modl' = struc' l r (gam ++ map[x |-> (self, [x])]) decs
+        in
+            $l (#r(#region modl')) LinkM(self, struc'' gam dec, modl')
+        end
+and struc'' gam (id, modl) =
+    $(#l(#region modl)) (#r(#region modl)) StructM(id, substM gam modl)
+
+fun fct l r x modl1 modl2 =
+    let
+        val {l=l1, r=r1} = #region modl1
+        val {l=l2, r=r2} = #region modl2
+    in
+        $l r UnitM($l r LinkM(x, $l1 r1 StructM("_Arg", modl1),
+                                 $l2 r2 StructM("_Res", substM (map[x |-> (x, ["_Arg"])]) modl2)))
+    end
+fun app l r modl1 modl2 =
+    let
+        val {l=l1, r=r1} = #region modl1
+        val {l=l2, r=r2} = #region modl2
+    in
+        $l r DotM($l r LinkM(rename "_app", $l2 r2 StructM("_Arg", modl2),
+                                            $l1 r1 NewM(modl1)), "_Res")
+    end
+
+fun lete l r (decs, exp) = List.foldr (fn((x, modl), exp) => $l r LetE(x, modl, exp)) exp decs
+
+fun nested l (x, []) modl = (x, modl)
+  | nested l (x, x'::ls) modl = (x, $l (#r(#region modl)) StructM(nested l (x', ls) modl))
+
+fun pathM l r (x, xs) = pathM' l r ($l r VarM(x), xs)
+and pathM' l r (p, []) = p
+  | pathM' l r (p, x::xs) = pathM' l r ($l r DotM(p, x), xs)
+
+fun boolE l r i = $l r InjE($l r TupleE[], i, $l r VariantT[$l r TupleT[], $l r TupleT[]])
+
+fun lambdaE params exp =
+    List.foldr (fn((l, x, typ), exp) => $l (#r(#region exp)) LambdaE(x, typ, exp)) exp params
+fun arrowT params typ =
+    List.foldr (fn((l, x, typ), typ') => $l (#r(#region typ')) ArrowT(typ, typ')) typ params
+fun genE NONE exp = exp
+  | genE (SOME(l, typvars)) exp = $l (#r(#region exp)) GenE(typvars, exp)
+fun univT NONE typ = typ
+  | univT (SOME(l, typvars)) typ = $l (#r(#region typ)) UnivT(typvars, typ)
+fun lambdaT NONE typ = typ
+  | lambdaT (SOME(l, typvars)) typ = $l (#r(#region typ)) LambdaT(typvars, typ)
+fun arrowK NONE kind = kind
+  | arrowK (SOME(l, typvars)) kind =
+    if #it kind = StarK then $l (#r(#region kind)) ArrowK(List.length typvars)
+    else raise EL.Error(#region kind, "ground kind required")
+
+fun kinds stat {it, region} = {it = kinds' stat it, region = region}
+and kinds' stat (VarM(x)) = VarM(x)
+  | kinds' stat (EmptyM) = EmptyM
+  | kinds' stat (ValM(exp)) = EmptyM
+  | kinds' stat (AbsValM(typ)) = EmptyM
+  | kinds' stat (TypM(typ)) = EmptyM
+  | kinds' stat (AbsTypM(kind)) = AbsTypM(kind)
+  | kinds' stat (DatTypM(typ)) = EmptyM
+  | kinds' stat (AbsDatTypM(typ)) = EmptyM
+  | kinds' stat (UnitM(modl)) = EmptyM
+  | kinds' stat (AbsUnitM(sign)) = NewM(kindsS sign)
+  | kinds' stat (NewM(modl)) = if stat then NewM(kinds stat modl) else EmptyM
+  | kinds' stat (StructM(l, modl)) = StructM(l, kinds stat modl)
+  | kinds' stat (DotM(modl, l)) = DotM(kinds stat modl, l)
+  | kinds' stat (LinkM(x, modl1, modl2)) = LinkM(x, kinds stat modl1, kinds stat modl2)
+  | kinds' stat (OLinkM(x, modl1, modl2)) = #it(kinds stat modl1)
+  | kinds' stat (SealM(modl, sign)) = #it(kindsS sign)
+and kindsS{it, region} = kindsS' it
+and kindsS'(ImportS(modl, lss)) = kinds true modl
+  | kindsS'(ExportS(modl, lss)) = kinds true modl
+
+fun types stat {it, region} = {it = types' stat it, region = region}
+and types' stat (VarM(x)) = VarM(x)
+  | types' stat (EmptyM) = EmptyM
+  | types' stat (ValM(exp)) = EmptyM
+  | types' stat (AbsValM(typ)) = AbsValM(typ)
+  | types' stat (TypM(typ)) = TypM(typ)
+  | types' stat (AbsTypM(kind)) = AbsTypM(kind)
+  | types' stat (DatTypM(typ)) = DatTypM(typ)
+  | types' stat (AbsDatTypM(typ)) = AbsDatTypM(typ)
+  | types' stat (UnitM(modl)) = EmptyM
+  | types' stat (AbsUnitM(sign)) = NewM(typesS sign)
+  | types' stat (NewM(modl)) = if stat then NewM(types stat modl) else EmptyM
+  | types' stat (StructM(l, modl)) = StructM(l, types stat modl)
+  | types' stat (DotM(modl, l)) = DotM(types stat modl, l)
+  | types' stat (LinkM(x, modl1, modl2)) = LinkM(x, types stat modl1, types stat modl2)
+  | types' stat (OLinkM(x, modl1, modl2)) = #it(types stat modl1)
+  | types' stat (SealM(modl, sign)) = #it(typesS sign)
+and typesS{it, region} = typesS' it
+and typesS'(ImportS(modl, lss)) = types true modl
+  | typesS'(ExportS(modl, lss)) = types true modl
+
+fun recm l r x modl =
+    $l r LinkM(x, kinds false modl, $l r LinkM(x, types false modl, modl))
+%%
+
+%header (functor LrValsFn(structure Token : TOKEN))
+%name Parser
+%pos  EL.pos
+%verbose
+
+%term
+    EOF
+  | DATA | DO | ELSE | END | EXPORT | FN | FUN | IF | IMPORT | IN | INT | BOOL | STRING
+  | CASE | LET | LINK | MODULE | NEW | OF | OPEN | OUT | FALSE | TRUE | PRINT
+  | REC | SIGNATURE | THEN | TYPE | UNIT | VAL | WHERE | WITH | BANG | AT
+  | LPAR | RPAR | LBRACK | RBRACK | LBRACE | RBRACE | COMMA | COLON
+  | SEMICOLON | DOTS | UNDERBAR | BAR | EQUALS | DARROW | ARROW | HASH | SEAL
+  | NUM of int | HEXNUM of int | WORD of word | HEXWORD of word
+  | REAL of real | TEXT of string | CHAR of char
+  | ALPHA of string | SYMBOL of string | TYPVAR of string
+  | PLUS | MINUS | ISEQUAL | LESS | CAT | DOT | FORALL | SEALS
+
+%keyword CASE DATA DO ELSE END EXPORT FN FUN IF IMPORT IN
+	 LET LINK MODULE NEW OPEN OUT FORALL
+	 REC SEALS SIGNATURE THEN TYPE UNIT VAL WHERE WITH
+
+%eop     EOF
+%noshift EOF
+
+%start prog
+
+%nonterm
+    lit of exp
+  | id of var
+  | lab of lab
+  | labs of lab list
+  | labs_list of lab list list
+  | labs_list1 of lab list list
+  | path of var * lab list
+  | typvar of typvar
+  | typvar_list of typvar list
+  | typvar_list1 of typvar list
+  | atmodl of modl
+  | appmodl of modl
+  | infmodl of modl
+  | modl of modl
+  | dec of (var * modl) list
+  | decs of (var * modl) list
+  | params of (pos * var * typ) list
+  | gens of (pos * typvar list) option
+  | atsign of sign
+  | appsign of sign
+  | infsign of sign
+  | sign of sign
+  | attyp of typ
+  | apptyp of typ
+  | inftyp of typ
+  | typ of typ
+  | typ_list of typ list
+  | typ_list1 of typ list
+  | typ_barlist1 of typ list
+  | typ_barlist2 of typ list
+  | kind of kind
+  | atexp of exp
+  | appexp of exp
+  | plusexp of exp
+  | infexp of exp
+  | exp of exp
+  | exp_list of exp list
+  | exp_list1 of exp list
+  | idexp_barlist1 of (var * exp) list
+  | prog of prog
+
+%%
+
+lit:
+    NUM                                         ($NUMleft NUMright IntE(NUM))
+  | HEXNUM                                      ($HEXNUMleft HEXNUMright IntE(HEXNUM))
+  | TEXT                                        ($TEXTleft TEXTright StringE(TEXT))
+  | FALSE                                       (boolE FALSEleft FALSEright 1)
+  | TRUE                                        (boolE TRUEleft TRUEright 2)
+(*
+  | REAL                                        ($REALleft REALright RealE(REAL))
+  | CHAR                                        ($CHARleft CHARright CharE(CHAR))
+*)
+
+id:
+    ALPHA                                       (ALPHA)
+  | SYMBOL                                      (SYMBOL)
+  | TYPVAR                                      (TYPVAR)
+
+lab:
+    id                                          (id)
+
+labs:
+    lab                                         (lab::[])
+  | lab DOT labs                                (lab::labs)
+
+labs_list:
+    (* empty *)                                 ([])
+  | labs_list1                                  (labs_list1)
+labs_list1:
+    labs                                        (labs::[])
+  | labs COMMA labs_list1                       (labs::labs_list1)
+
+path:
+    id                                          ((id, []))
+  | id DOT labs                                 ((id, labs))
+
+typvar:
+    id                                          (id)
+
+typvar_list:
+    (* empty *)                                 ([])
+  | typvar_list1                                (typvar_list1)
+typvar_list1:
+    typvar                                      (typvar::[])
+  | typvar COMMA typvar_list1                   (typvar::typvar_list1)
+
+atmodl:
+    LPAR modl RPAR                              (modl)
+  | id                                          ($idleft idright VarM(id))
+  | atmodl DOT lab                              ($atmodlleft labright DotM(atmodl, lab))
+  | LBRACE decs RBRACE                          (struc LBRACEleft LBRACEright decs)
+(*
+  | LBRACK RBRACK                               ($$LBRACKleft RBRACKright EmptyM)
+*)
+  | LBRACK VAL exp RBRACK                       ($LBRACKleft RBRACKright ValM(exp))
+  | LBRACK VAL COLON typ RBRACK                 ($LBRACKleft RBRACKright AbsValM(typ))
+  | LBRACK TYPE typ RBRACK                      ($LBRACKleft RBRACKright TypM(typ))
+  | LBRACK TYPE COLON kind RBRACK               ($LBRACKleft RBRACKright AbsTypM(kind))
+  | LBRACK DATA typ RBRACK                      ($LBRACKleft RBRACKright DatTypM(typ))
+  | LBRACK DATA COLON typ RBRACK                ($LBRACKleft RBRACKright AbsDatTypM(typ))
+  | LBRACK UNIT modl RBRACK                     ($LBRACKleft RBRACKright UnitM(modl))
+  | LBRACK UNIT COLON sign RBRACK               ($LBRACKleft RBRACKright AbsUnitM(sign))
+  (* Sugar *)
+  | LBRACK MODULE modl RBRACK                   (modl)
+  | LBRACK MODULE COLON modl RBRACK             ($LBRACKleft RBRACKright NewM(modl))
+  (* Sugar sugar *)
+  | LBRACK VAL exp COLON typ RBRACK             ($LBRACKleft RBRACKright LinkM(rename "_val", $VALleft expright ValM(exp), $COLONleft typright AbsValM(typ)))
+  | LBRACK TYPE RBRACK                          ($LBRACKleft RBRACKright AbsTypM($$TYPEleft TYPEright StarK))
+  | LBRACK TYPE typ COLON kind RBRACK           ($LBRACKleft RBRACKright LinkM(rename "_type", $TYPEleft typright TypM(typ), $COLONleft kindright AbsTypM(kind)))
+  | LBRACK DATA typ COLON kind RBRACK           ($LBRACKleft RBRACKright LinkM(rename "_data", $DATAleft typright DatTypM(typ), $COLONleft kindright AbsTypM(kind)))
+  | LBRACK DATA COLON typ COLON kind RBRACK     ($LBRACKleft RBRACKright LinkM(rename "_data", $DATAleft typright AbsDatTypM(typ), $COLONleft kindright AbsTypM(kind)))
+  | LBRACK MODULE modl COLON modl RBRACK        ($LBRACKleft RBRACKright LinkM(rename "_module", modl1, $COLONleft modl2right NewM(modl2)))
+  | LBRACK UNIT modl COLON sign RBRACK          ($LBRACKleft RBRACKright LinkM(rename "_unit", $UNITleft modlright UnitM(modl), $COLONleft signright AbsUnitM(sign)))
+
+appmodl:
+    atmodl                                      (atmodl)
+  | BANG atmodl                                 ($BANGleft atmodlright NewM(atmodl))
+  (* Sugar *)
+  | NEW atmodl                                  ($NEWleft atmodlright NewM(atmodl))
+  | appmodl atmodl                              (app appmodlleft atmodlright appmodl atmodl)
+
+infmodl:
+    appmodl                                     (appmodl)
+  | infmodl SEAL sign                           ($infmodlleft signright SealM(infmodl, sign))
+
+modl:
+    infmodl                                     (infmodl)
+  | LINK id EQUALS infmodl WITH modl            ($LINKleft modlright LinkM(id, infmodl, modl))
+  | LINK id EQUALS infmodl SEALS modl           ($LINKleft modlright OLinkM(id, infmodl, modl))
+  (* Sugar *)
+  | infmodl WITH modl                           ($infmodlleft modlright LinkM(rename "_link", infmodl, modl))
+  | infmodl SEALS modl                          ($infmodlleft modlright OLinkM(rename "_link", infmodl, modl))
+  | LINK id COLON infmodl WITH modl             ($LINKleft modlright LinkM(id, $COLONleft infmodlright NewM(infmodl), modl))
+  | LINK id COLON infmodl SEALS modl            ($LINKleft modlright OLinkM(id, $COLONleft infmodlright NewM(infmodl), modl))
+  | REC id IN modl                              (recm RECleft modlright id modl)
+  | LET decs IN modl                            ($LETleft modlright DotM(struc decsleft modlright (decs @ [("let", modl)]), "let"))
+  | LET id EQUALS modl IN modl                  ($LETleft modl2right DotM(struc idleft modl2right [(id, modl1), ("let", modl2)], "let"))
+  | FN id EQUALS infmodl IN modl                (fct FNleft modlright id infmodl modl)
+  | FN id COLON infmodl IN modl                 (fct FNleft modlright id ($COLONleft infmodlright NewM(infmodl)) modl)
+
+decs:
+    (* empty *)                                 ([])
+  | dec decs                                    (dec @ decs)
+
+dec:
+  (* Sugar *)
+    MODULE path EQUALS modl                     ([nested MODULEleft path modl])
+  | MODULE path COLON modl                      ([nested MODULEleft path ($MODULEleft modlright NewM(modl))])
+  | MODULE path COLON modl EQUALS modl          ([nested MODULEleft path ($MODULEleft modlright NewM(modl1)), nested MODULEleft path modl2])
+  | VAL path gens params EQUALS exp             ([nested VALleft path ($VALleft expright ValM(genE gens (lambdaE params exp)))])
+  | VAL path gens params COLON typ              ([nested VALleft path ($VALleft typright AbsValM(univT gens (arrowT params typ)))])
+  | TYPE path gens EQUALS typ                   ([nested TYPEleft path ($TYPEleft typright TypM(lambdaT gens typ))])
+  | TYPE path gens COLON kind                   ([nested TYPEleft path ($TYPEleft kindright AbsTypM(arrowK gens kind))])
+  | DATA path gens EQUALS typ                   ([nested DATAleft path ($DATAleft typright DatTypM(lambdaT gens typ))])
+  | DATA path gens COLON typ                    ([nested DATAleft path ($DATAleft typright AbsDatTypM(lambdaT gens typ))])
+  | UNIT path EQUALS modl                       ([nested UNITleft path ($UNITleft modlright UnitM(modl))])
+  | UNIT path COLON sign                        ([nested UNITleft path ($UNITleft signright AbsUnitM(sign))])
+  (* Sugar sugar *)
+  | COMMA                                       ([])
+  | VAL path gens params COLON typ EQUALS exp   ([nested VALleft path ($VALleft typright AbsValM(univT gens (arrowT params typ))), nested VALleft path ($VALleft expright ValM(genE gens (lambdaE params exp)))])
+  | TYPE path gens COLON kind EQUALS typ        ([nested TYPEleft path ($TYPEleft kindright AbsTypM(arrowK gens kind)), nested TYPEleft path ($TYPEleft typright TypM(lambdaT gens typ))])
+  | TYPE path gens                              ([nested TYPEleft path ($TYPEleft pathright AbsTypM(arrowK gens ($$pathleft pathright StarK)))])
+  | DATA path gens COLON kind EQUALS typ        ([nested DATAleft path ($DATAleft kindright AbsTypM(arrowK gens kind)), nested DATAleft path ($DATAleft typright DatTypM(lambdaT gens typ))])
+  | DATA path gens COLON kind COLON typ         ([nested DATAleft path ($DATAleft kindright AbsTypM(arrowK gens kind)), nested DATAleft path ($DATAleft typright AbsDatTypM(lambdaT gens typ))])
+  | UNIT path COLON sign EQUALS modl            ([nested UNITleft path ($UNITleft signright AbsUnitM(sign)), nested UNITleft path ($UNITleft modlright UnitM(modl))])
+  | DO exp                                      ([(rename "_do", $DOleft expright ValM(exp))])
+
+params:
+    (* empty *)                                 ([])
+  | LPAR id COLON typ RPAR params               ((LPARleft, id, typ)::params)
+
+gens:
+    (* empty *)                                 (NONE)
+  | LBRACK typvar_list RBRACK                   (SOME(LBRACKleft, typvar_list))
+
+atsign:
+    LPAR appmodl IMPORT LPAR labs_list RPAR RPAR ($LPAR1left RPAR2right ImportS(appmodl, labs_list))
+  | LPAR appmodl EXPORT LPAR labs_list RPAR RPAR ($LPAR1left RPAR2right ExportS(appmodl, labs_list))
+
+appsign:
+    atsign                                      (atsign)
+
+sign:
+    appsign                                     (appsign)
+  | appmodl IMPORT LPAR labs_list RPAR          ($appmodlleft RPARright ImportS(appmodl, labs_list))
+  | appmodl EXPORT LPAR labs_list RPAR          ($appmodlleft RPARright ExportS(appmodl, labs_list))
+  (* Sugar *)
+  | appmodl                                     ($appmodlleft appmodlright ImportS(appmodl, []))
+
+kind:
+    HASH                                        ($$HASHleft HASHright StarK)
+  | HASH NUM ARROW HASH                         ($HASH1left HASH2right ArrowK(NUM))
+  (* Sugar *)
+  | HASH ARROW HASH                             ($HASH1left HASH2right ArrowK(1))
+
+attyp:
+    LPAR typ_list RPAR                          (case typ_list of [typ] => typ | _ => $LPARleft RPARright TupleT(typ_list))
+  | LPAR typ_barlist2 RPAR                      ($LPARleft RPARright VariantT(typ_barlist2))
+(*
+  | typvar                                      ($typvarleft typvarright VarT(typvar))
+*)
+  | INT                                         ($$INTleft INTright IntT)
+  | STRING                                      ($$STRINGleft STRINGright StringT)
+  | BANG atmodl                                 ($BANGleft atmodlright ModT(atmodl))
+  (* Sugar *)
+  | BOOL                                        ($BOOLleft BOOLright VariantT[$BOOLleft BOOLright TupleT[], $BOOLleft BOOLright TupleT[]])
+  | path                                        ($pathleft pathright ModT(pathM pathleft pathright path))
+
+apptyp:
+    attyp                                       (attyp)
+  | apptyp LBRACK typ_list RBRACK               ($apptypleft RBRACKright ApplyT(apptyp, typ_list))
+
+inftyp:
+    apptyp                                      (apptyp)
+  | apptyp ARROW inftyp                         ($apptypleft inftypright ArrowT(apptyp, inftyp))
+
+typ:
+    inftyp                                      (inftyp)
+  | FORALL LBRACK typvar_list RBRACK ARROW typ  ($FORALLleft typright UnivT(typvar_list, typ))
+  | FN LBRACK typvar_list RBRACK ARROW typ      ($FNleft typright LambdaT(typvar_list, typ))
+  (* Sugar *)
+(*
+  | FORALL typvar ARROW typ                     ($FORALLleft typright UnivT([typvar], typ))
+  | FN typvar ARROW typ                         ($FNleft typright LambdaT([typvar], typ))
+*)
+
+typ_list:
+    (* empty *)                                 ([])
+  | typ_list1                                   (typ_list1)
+typ_list1:
+    typ                                         (typ::[])
+  | typ COMMA typ_list1                         (typ::typ_list1)
+typ_barlist1:
+    typ                                         (typ::[])
+  | typ BAR typ_barlist1                        (typ::typ_barlist1)
+typ_barlist2:
+    typ BAR typ_barlist1                        (typ::typ_barlist1)
+
+atexp:
+    LPAR exp_list RPAR                          (case exp_list of [exp] => exp | _ => $LPARleft RPARright TupleE(exp_list))
+  | lit                                         (lit)
+  | BANG atmodl                                 ($BANGleft atmodlright ModE(atmodl))
+  (* Sugar *)
+  | path                                        ($pathleft pathright ModE(pathM pathleft pathright path))
+  | LPAR exp COLON typ RPAR                     (let val x = rename "_colon" in $LPARleft RPARright LetE(x, $LPARleft RPARright LinkM(rename "_val", $expleft expright ValM(exp), $COLONleft typright AbsValM(typ)), $LPARleft RPARright ModE($LPARleft RPARright VarM(x))) end)
+
+appexp:
+    atexp                                       (atexp)
+  | appexp atexp                                ($appexpleft atexpright ApplyE(appexp, atexp))
+  | appexp LBRACK typ_list RBRACK               ($appexpleft RBRACKright InstE(appexp, typ_list))
+  | IN appmodl LBRACK typ_list RBRACK atexp     ($INleft atexpright FoldE(appmodl, typ_list, atexp))
+  | OUT appmodl LBRACK typ_list RBRACK atexp    ($OUTleft atexpright UnfoldE(appmodl, typ_list, atexp))
+  | appexp HASH NUM                             ($appexpleft NUMright ProjE(appexp, NUM))
+  | PRINT atexp                                 ($PRINTleft atexpright PrintE(atexp))
+  | appexp AT NUM LBRACK typ RBRACK             ($appexpleft RBRACKright InjE(appexp, NUM, typ))
+  (* Sugar *)
+  | AT NUM LBRACK typ RBRACK                    ($ATleft RBRACKright InjE($ATleft ATright TupleE[], NUM, typ))
+
+plusexp:
+    appexp                                      (appexp)
+  | plusexp PLUS appexp                         ($plusexpleft appexpright PlusE(plusexp, appexp))
+  | plusexp MINUS appexp                        ($plusexpleft appexpright MinusE(plusexp, appexp))
+  | plusexp CAT appexp                          ($plusexpleft appexpright CatE(plusexp, appexp))
+
+infexp:
+    plusexp                                     (plusexp)
+  | plusexp ISEQUAL plusexp                     ($plusexp1left plusexp2right EqualE(plusexp1, plusexp2))
+  | plusexp LESS plusexp                        ($plusexp1left plusexp2right LessE(plusexp1, plusexp2))
+
+exp:
+    infexp                                      (infexp)
+  | CASE exp OF idexp_barlist1                  ($CASEleft idexp_barlist1right CaseE(exp, idexp_barlist1))
+  | FN id COLON apptyp ARROW exp                ($FNleft expright LambdaE(id, apptyp, exp))
+  | FN LBRACK typvar_list RBRACK ARROW exp      ($FNleft expright GenE(typvar_list, exp))
+  | LET decs IN exp                             (lete LETleft expright (decs, exp))
+  (* Sugar *)
+  | IF exp THEN exp ELSE exp                    ($IFleft exp3right CaseE(exp1, [(rename "_then", exp3), (rename "_else", exp2)]))
+(*
+  | FN typvar ARROW exp                         ($FNleft expright GenE([typvar], exp))
+*)
+  | LET id EQUALS exp IN exp                    ($LETleft expright LetE(id, $expleft expright ValM(exp1), exp2))
+  | infexp SEMICOLON exp                        ($infexpleft expright LetE(rename "_seq", $infexpleft infexpright ValM(infexp), exp))
+
+exp_list:
+    (* empty *)                                 ([])
+  | exp_list1                                   (exp_list1)
+exp_list1:
+    exp                                         (exp::[])
+  | exp COMMA exp_list1                         (exp::exp_list1)
+idexp_barlist1:
+    id ARROW exp                                ((id, exp)::[])
+  | id ARROW infexp BAR idexp_barlist1          ((id, infexp)::idexp_barlist1)
+
+prog:
+    decs                                        (struc decsleft decsright decs)
+    (* Sugar *)
+  | modl                                        (struc modlleft modlright [("it", modl)])

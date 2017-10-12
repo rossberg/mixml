@@ -1,0 +1,2 @@
+PATH=/usr/local/smlnj-110.65/bin/:$PATH
+sml @SMLload=mixml.x86-darwin $*

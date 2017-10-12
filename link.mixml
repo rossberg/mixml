@@ -1,0 +1,58 @@
+(*) Various micro tests of linking
+
+(*)unit L1 = {type t = int} with {type t = int} :> {type t} (*) inconsistent type
+unit L1'''' = {type t} with {type t}
+unit L1''' = ([type] seals [type int]) with [type]
+unit L1'' = {type t} with ({type t} seals {type t = int})
+unit L1' = {type t} with ({type t = int} :> {type t})
+
+unit L2 = {type t, type u = int} :> {type t, type u, type v = int} import (t)
+
+unit L3 = link X = {type t} with {type u, type t = (u, u), type v = X.t}
+
+unit L4 = {type t, type u = t} :> {type t, type u} import (t)
+
+unit L5 = {type t = int, type u} :> {type t, type u = t}
+
+(*)unit M1 = {val f : int -> int val g = f} with {val f ['a] (x : 'a) = x}  (*) not currently wf
+unit M1 = {unit U : {} unit V = U} with {unit U = {type t = int}}
+
+(*)unit M2 = {val f : int -> int val g = f} with {val f ['a] (x : 'a) = x val g = f}  (*) not currently wf
+(*)unit M2 = {unit U : {} unit V = U} with {unit U = {type t = int} unit V = U}
+(*)unit M2' = {unit U : {type t = int} unit V = U} with {unit U = {} unit V = U}
+
+(*)unit M3 = {val f : int -> int val g : forall['a] -> 'a -> 'a} with {val f : int -> int val g = f}  (*) not currently wf
+(*)unit M3 = {unit U : {} unit V : {type t = int}} with {unit U = {} unit V = U}
+
+(*)unit M4 = {val f : forall['a] -> 'a -> 'a val g : int -> int} with {val f : forall['a] -> 'a -> 'a val g = f}  (*) not currently wf
+(*)unit M4 = {unit U : {type t = int} unit V : {}} with {unit U = {type t = int} unit V = U}
+
+(*)unit M5 = {val f : forall['a] -> 'a -> 'a val g : int -> int} with {val f : int -> int val g = f}  (*) not currently wf
+(*)unit M5 = {unit U : {type t = int} unit V : {}} with {unit U = {} unit V = U}
+
+unit R1 = link X = {module B = [type]} with {module A = X.B}
+
+unit R2 = link X = {module A = {}, module B = {module C = {}}} with {module A = X.B.C, module B = {module C = [type], module D = X.A}}
+
+(*)unit R3 = link Y = (link X = {type t, type u} with {type v = X.u, type w = X.t}) with {type t = Y.w, type u = int} (*) circularity
+
+(*)unit R4 = link X = (link Y = {type t ['a, 'b]} with {type t ['a, 'b] = Y.t ['b, 'a]}) with {type t ['a, 'b] = int} (*) circularity
+
+(*)unit R5 = {unit F : {type t}, module M = !F} with {unit F = {type t = int}, module M = {type t = int}} (*) type inconsistency
+(*)unit R5' = {unit F = {type t = int}, module M = {type t = int}} with {unit F : {type t}, module M = !F} (*) type inconsistency
+
+unit R6 = {type t, type u = t} with {type u = int, type t = u}
+unit R6' = {type u = int, type t = u} with {type t, type u = t}
+
+(*)unit R7 = {type t, val f (x:t) = x + 3} with {type t = int} (*) type mismatch
+unit R7' = link X = {type t} with {type t, val f (x:X.t) = x + 3} with {type t = int}
+
+(*)unit R8 = link X = {type t} with {type t = int, type u = int} :> ({type t, type u = t} with {type u = X.t}) (*) type inconsistency
+
+unit R9 = {type t = int} with {type t, val f (x : t) = x + 3}
+
+module F4' = fn Y = [type] in [type]
+unit S4' = link Y = [type] with F4' Y
+
+unit F4'' = link str = {module A = [type]} with {module B = [type]}
+unit S4'' = link Y = [type] with (link app = {module A = Y} with !F4'').B

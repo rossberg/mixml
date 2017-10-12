@@ -1,0 +1,46 @@
+type order = (() | () | ())
+val less = @1[order]
+val equal = @2[order]
+val greater = @3[order]
+
+val compare(n : int)(m : int) = if n == m then equal else if n < m then less else greater
+
+do print(compare 4 5); print "\n"
+do print(compare 7 7); print "\n"
+do print(compare 100 0); print "\n"
+
+type option[a] = (() | a)
+val none[a] = @1[option[a]]
+val some[a](x : a) = x@2[option[a]]
+
+val nothing = none[string]
+val just = some[string] "ho"
+do print nothing; print "\n"
+do print just; print "\n"
+
+module ListD = link L = {type list[a]} with {data list[a] = (() | (a, L.list[a]))}
+
+type list[a] = ListD.list[a]
+val nil[a] = in ListD.list[a](()@1[(() | (a, list[a]))])
+val cons[a](x : a)(xs : list[a]) = in ListD.list[a]((x, xs)@2[(() | (a, list[a]))])
+val nili = nil[int]
+val consi = cons[int]
+
+val l = consi 3 (consi 5 (consi 0 (consi 2 nili)))
+do print l; print "\n"
+
+module LISTF = fn L = {type list[a]} in
+{
+  type list[a],
+  val toList[a] : (() | (a, L.list[a])) -> list[a],
+  val fromList[a] : list[a] -> (() | (a, L.list[a]))
+}
+
+unit LIST = link L = {type list[a]} with LISTF L
+
+module List = link L = {type list[a]} with
+![unit LISTF L seals {
+  type list[a] = (() | (a, L.list[a])),
+  val toList[a](l : list[a]) = l,
+  val fromList[a](l : list[a]) = l
+}]

@@ -1,0 +1,14 @@
+(*) Fibonacci
+
+unit Fib =
+  link F = {val fib' : int -> int -> int -> int} with
+  {
+    val fib' (n2 : int) (n1 : int) (n : int) =
+      if n == 0 then n2
+      else if n == 1 then n1
+      else F.fib' n1 (n1 + n2) (n - 1)
+    val fib = fib' 0 1
+  }
+
+module F = !Fib
+do print "fib 10 = "; print (F.fib 10); print "\n"

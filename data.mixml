@@ -1,0 +1,49 @@
+(*) Recursive datatype encoding, several versions
+
+(*) Signature {:t=(t,t)}
+unit S = {type t, val t_in : (t,t) -> t, val t_out : t -> (t,t)}
+
+(*) Structure {t=(t,t)}
+
+module M0 =
+  link Y = {type t} with
+  new [unit
+    {type t, val t_in : (Y.t,Y.t) -> t, val t_out : t -> (Y.t,Y.t)}
+    seals
+    {type t = (Y.t,Y.t), val t_in = fn x:t -> x, val t_out = fn x:t -> x}
+  ]
+
+val x : M0.t
+val x = M0.t_in (x,x)
+
+unit F1 =
+{
+  module Y = {type t},
+  module Res =
+    {type t, val t_in : (Y.t,Y.t) -> t, val t_out : t -> (Y.t,Y.t)}
+    seals
+    {type t = (Y.t,Y.t), val t_in = fn x:t -> x, val t_out = fn x:t -> x}
+}
+module M1 = link Y = {type t} with (!F1 with {module Y = Y}).Res
+
+unit F2 =
+{
+  type yt,
+  module Res =
+    {type t, val t_in : (yt,yt) -> t, val t_out : t -> (yt,yt)}
+    seals
+    {type t = (yt,yt), val t_in(x:t) = x, val t_out(x:t) = x}
+}
+module M2 = link Y = {type t} with (!F2 with {type yt = Y.t}).Res
+
+module F3 = fn Y = {type t} in
+  {type t, val t_in : (Y.t,Y.t) -> t, val t_out : t -> (Y.t,Y.t)}
+  seals
+  {type t = (Y.t,Y.t), val t_in(x:t) = x, val t_out(x:t) = x}
+module M3 = link Y = {type t} with F3 Y
+
+module F4 = fn Y = {type t} in {type t, val t_in : (Y.t, Y.t) -> t, val t_out : t -> (Y.t, Y.t)}
+unit S4 = link Y = {type t} with F4 Y
+
+module M4 = link Y = {type t} with
+  ![unit F4 Y seals {type t = (Y.t, Y.t), val t_in(x : t) = x, val t_out(x : t) = x}]
